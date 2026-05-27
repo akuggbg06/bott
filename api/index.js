@@ -1,9 +1,7 @@
-const { Bot } = require('grammy');
 const { Redis } = require('@upstash/redis');
 
-// Konek ke Redis (Upstash)
 const redis = Redis.fromEnv();
-const bot = new Bot(process.env.BOT_TOKEN);
+const TOKEN = process.env.BOT_TOKEN;
 
 // Generate random key
 function generateKey(length = 8) {
@@ -15,7 +13,7 @@ function generateKey(length = 8) {
     return result;
 }
 
-// Parse durasi (1d, 3d, 5d, 7d, 30d, 4m)
+// Parse durasi
 function parseDuration(duration) {
     const unit = duration.slice(-1);
     const value = parseInt(duration.slice(0, -1));
@@ -34,143 +32,24 @@ function formatDate(timestamp) {
     return date.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
 }
 
-// ========== COMMAND TELEGRAM ==========
-
-// /start
-bot.command('start', async (ctx) => {
-    await ctx.reply(
-        `🤖 *AIDE Pro Key Bot v1.0*\n\n` +
-        `📋 *Commands:*\n` +
-        `/gen <duration> - Generate key (1d/3d/5d/7d/30d/4m)\n` +
-        `/delkey <key> - Delete key\n` +
-        `/listkey - Lihat semua key\n` +
-        `/cekkey <key> - Cek status key\n\n` +
-        `📝 *Contoh:*\n` +
-        `/gen 7d\n` +
-        `/gen 4m`,
-        { parse_mode: 'Markdown' }
-    );
-});
-
-// /gen
-bot.command('gen', async (ctx) => {
-    const args = ctx.message.text.split(' ');
-    const duration = args[1];
-    
-    if (!duration) {
-        await ctx.reply('❌ Masukkan durasi! Contoh: /gen 7d');
-        return;
-    }
-    
-    const expiredAt = parseDuration(duration);
-    if (!expiredAt) {
-        await ctx.reply('❌ Format salah! Gunakan: 1d, 3d, 5d, 7d, 30d, atau 4m');
-        return;
-    }
-    
-    const key = generateKey(10);
-    const createdBy = ctx.from.username || ctx.from.first_name || 'unknown';
-    
-    await redis.set(`key:${key}`, {
-        key: key,
-        createdAt: Date.now(),
-        expiredAt: expiredAt,
-        createdBy: createdBy
+// Kirim pesan ke Telegram
+async function sendMessage(chatId, text, parseMode = 'Markdown') {
+    const url = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            chat_id: chatId,
+            text: text,
+            parse_mode: parseMode
+        })
     });
-    
-    const durationText = duration.endsWith('d') ? `${duration.slice(0,-1)} hari` : `${duration.slice(0,-1)} menit`;
-    
-    await ctx.reply(
-        `✅ *Key berhasil digenerate!*\n\n` +
-        `🔑 *Key:* \`${key}\`\n` +
-        `⏰ *Expired:* ${durationText} (${formatDate(expiredAt)})`,
-        { parse_mode: 'Markdown' }
-    );
-});
+    return response.json();
+}
 
-// /delkey
-bot.command('delkey', async (ctx) => {
-    const args = ctx.message.text.split(' ');
-    const keyToDelete = args[1];
-    
-    if (!keyToDelete) {
-        await ctx.reply('❌ Masukkan key! Contoh: /delkey ABC123');
-        return;
-    }
-    
-    const exists = await redis.exists(`key:${keyToDelete}`);
-    if (exists) {
-        await redis.del(`key:${keyToDelete}`);
-        await ctx.reply(`✅ Key \`${keyToDelete}\` berhasil dihapus!`, { parse_mode: 'Markdown' });
-    } else {
-        await ctx.reply(`❌ Key \`${keyToDelete}\` tidak ditemukan!`, { parse_mode: 'Markdown' });
-    }
-});
-
-// /listkey
-bot.command('listkey', async (ctx) => {
-    const keys = await redis.keys('key:*');
-    
-    if (keys.length === 0) {
-        await ctx.reply('📭 Belum ada key yang digenerate.');
-        return;
-    }
-    
-    let message = '📋 *Daftar Keys:*\n\n';
-    let count = 0;
-    
-    for (const k of keys) {
-        if (count >= 15) break;
-        const data = await redis.get(k);
-        if (data) {
-            const expired = Date.now() > data.expiredAt;
-            const statusIcon = expired ? '❌' : '✅';
-            message += `${statusIcon} \`${data.key}\`\n`;
-            count++;
-        }
-    }
-    
-    if (keys.length > 15) {
-        message += `\n*...dan ${keys.length - 15} key lainnya*`;
-    }
-    
-    await ctx.reply(message, { parse_mode: 'Markdown' });
-});
-
-// /cekkey
-bot.command('cekkey', async (ctx) => {
-    const args = ctx.message.text.split(' ');
-    const cekKey = args[1];
-    
-    if (!cekKey) {
-        await ctx.reply('❌ Masukkan key! Contoh: /cekkey ABC123');
-        return;
-    }
-    
-    const data = await redis.get(`key:${cekKey}`);
-    
-    if (!data) {
-        await ctx.reply(`❌ Key \`${cekKey}\` tidak valid!`, { parse_mode: 'Markdown' });
-        return;
-    }
-    
-    const expired = Date.now() > data.expiredAt;
-    const statusIcon = expired ? '❌' : '✅';
-    const statusText = expired ? 'EXPIRED' : 'ACTIVE';
-    
-    await ctx.reply(
-        `${statusIcon} *Status Key:*\n\n` +
-        `🔑 *Key:* \`${cekKey}\`\n` +
-        `⏰ *Expired:* ${formatDate(data.expiredAt)}\n` +
-        `📊 *Status:* ${statusText}\n` +
-        `👤 *Created by:* ${data.createdBy}`,
-        { parse_mode: 'Markdown' }
-    );
-});
-
-// ========== WEBHOOK HANDLER BUAT VERCEL ==========
+// Handler webhook
 module.exports = async (req, res) => {
-    // Endpoint GET buat APK AIDE Pro (validasi key)
+    // GET buat APK validasi
     if (req.method === 'GET' && req.query.key) {
         const key = req.query.key;
         const data = await redis.get(`key:${key}`);
@@ -178,32 +57,158 @@ module.exports = async (req, res) => {
         if (!data) {
             return res.json({ success: false, message: 'Key invalid!' });
         }
-        
         if (Date.now() > data.expiredAt) {
             return res.json({ success: false, message: 'Key expired!' });
         }
-        
         return res.json({ success: true, message: 'Key valid!' });
     }
     
-    // Endpoint GET biasa (cek status)
+    // GET biasa (cek status)
     if (req.method === 'GET') {
-        return res.status(200).json({ 
-            status: 'running', 
-            bot: 'AIDE Pro Key Bot',
-            endpoints: {
-                validate: 'GET ?key=YOUR_KEY'
-            }
-        });
+        return res.json({ status: 'running', bot: 'AIDE Pro Key Bot' });
     }
     
-    // Endpoint POST buat Telegram webhook
+    // POST dari Telegram
     if (req.method === 'POST') {
+        const update = req.body;
+        
         try {
-            await bot.handleUpdate(req.body);
+            if (update.message && update.message.text) {
+                const chatId = update.message.chat.id;
+                const text = update.message.text.trim();
+                
+                // /start
+                if (text === '/start') {
+                    await sendMessage(chatId,
+                        `🤖 *AIDE Pro Key Bot v1.0*\n\n` +
+                        `📋 *Commands:*\n` +
+                        `/gen <duration> - Generate key (1d/3d/5d/7d/30d/4m)\n` +
+                        `/delkey <key> - Delete key\n` +
+                        `/listkey - Lihat semua key\n` +
+                        `/cekkey <key> - Cek status key\n\n` +
+                        `📝 *Contoh:*\n` +
+                        `/gen 7d\n` +
+                        `/gen 4m`
+                    );
+                }
+                
+                // /gen
+                else if (text.startsWith('/gen')) {
+                    const args = text.split(' ');
+                    const duration = args[1];
+                    
+                    if (!duration) {
+                        await sendMessage(chatId, '❌ Masukkan durasi! Contoh: /gen 7d');
+                        return res.status(200).json({ ok: true });
+                    }
+                    
+                    const expiredAt = parseDuration(duration);
+                    if (!expiredAt) {
+                        await sendMessage(chatId, '❌ Format salah! Gunakan: 1d, 3d, 5d, 7d, 30d, atau 4m');
+                        return res.status(200).json({ ok: true });
+                    }
+                    
+                    const key = generateKey(10);
+                    await redis.set(`key:${key}`, {
+                        key: key,
+                        createdAt: Date.now(),
+                        expiredAt: expiredAt,
+                        createdBy: update.message.from.username || 'unknown'
+                    });
+                    
+                    const durationText = duration.endsWith('d') ? `${duration.slice(0,-1)} hari` : `${duration.slice(0,-1)} menit`;
+                    await sendMessage(chatId,
+                        `✅ *Key berhasil digenerate!*\n\n` +
+                        `🔑 *Key:* \`${key}\`\n` +
+                        `⏰ *Expired:* ${durationText} (${formatDate(expiredAt)})`
+                    );
+                }
+                
+                // /cekkey
+                else if (text.startsWith('/cekkey')) {
+                    const args = text.split(' ');
+                    const cekKey = args[1];
+                    
+                    if (!cekKey) {
+                        await sendMessage(chatId, '❌ Masukkan key! Contoh: /cekkey ABC123');
+                        return res.status(200).json({ ok: true });
+                    }
+                    
+                    const data = await redis.get(`key:${cekKey}`);
+                    
+                    if (!data) {
+                        await sendMessage(chatId, `❌ Key \`${cekKey}\` tidak valid!`);
+                    } else {
+                        const expired = Date.now() > data.expiredAt;
+                        const statusIcon = expired ? '❌' : '✅';
+                        const statusText = expired ? 'EXPIRED' : 'ACTIVE';
+                        await sendMessage(chatId,
+                            `${statusIcon} *Status Key:*\n\n` +
+                            `🔑 *Key:* \`${cekKey}\`\n` +
+                            `⏰ *Expired:* ${formatDate(data.expiredAt)}\n` +
+                            `📊 *Status:* ${statusText}\n` +
+                            `👤 *Created by:* ${data.createdBy}`
+                        );
+                    }
+                }
+                
+                // /delkey
+                else if (text.startsWith('/delkey')) {
+                    const args = text.split(' ');
+                    const keyToDelete = args[1];
+                    
+                    if (!keyToDelete) {
+                        await sendMessage(chatId, '❌ Masukkan key! Contoh: /delkey ABC123');
+                        return res.status(200).json({ ok: true });
+                    }
+                    
+                    const exists = await redis.exists(`key:${keyToDelete}`);
+                    if (exists) {
+                        await redis.del(`key:${keyToDelete}`);
+                        await sendMessage(chatId, `✅ Key \`${keyToDelete}\` berhasil dihapus!`);
+                    } else {
+                        await sendMessage(chatId, `❌ Key \`${keyToDelete}\` tidak ditemukan!`);
+                    }
+                }
+                
+                // /listkey
+                else if (text === '/listkey') {
+                    const keys = await redis.keys('key:*');
+                    
+                    if (keys.length === 0) {
+                        await sendMessage(chatId, '📭 Belum ada key yang digenerate.');
+                    } else {
+                        let message = '📋 *Daftar Keys:*\n\n';
+                        let count = 0;
+                        
+                        for (const k of keys) {
+                            if (count >= 15) break;
+                            const data = await redis.get(k);
+                            if (data) {
+                                const expired = Date.now() > data.expiredAt;
+                                const statusIcon = expired ? '❌' : '✅';
+                                message += `${statusIcon} \`${data.key}\`\n`;
+                                count++;
+                            }
+                        }
+                        
+                        if (keys.length > 15) {
+                            message += `\n*...dan ${keys.length - 15} key lainnya*`;
+                        }
+                        
+                        await sendMessage(chatId, message);
+                    }
+                }
+                
+                // Command ga dikenal
+                else if (!text.startsWith('/')) {
+                    await sendMessage(chatId, 'Gunakan /start untuk melihat daftar command');
+                }
+            }
+            
             res.status(200).json({ ok: true });
         } catch (error) {
-            console.error('Error handling update:', error);
+            console.error('Error:', error);
             res.status(200).json({ ok: false, error: error.message });
         }
         return;
