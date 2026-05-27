@@ -1,6 +1,7 @@
 {
-  "name": "bot-simple",
+  "name": "bott",
   "version": "1.0.0",
+  "type": "module",
   "dependencies": {
     "grammy": "^1.21.0"
   }
