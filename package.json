@@ -1,0 +1,7 @@
+{
+  "name": "bot-simple",
+  "version": "1.0.0",
+  "dependencies": {
+    "grammy": "^1.21.0"
+  }
+}
