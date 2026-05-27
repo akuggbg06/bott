@@ -1,20 +1,15 @@
-const { Bot } = require('grammy');
+import { Bot, webhookCallback } from 'grammy';
 
-const bot = new Bot(process.env.BOT_TOKEN);
+// 1. Baca Token (Pastikan nama variabelnya BOT_TOKEN)
+const token = process.env.BOT_TOKEN;
+if (!token) throw new Error("BOT_TOKEN environment variable not set.");
 
-bot.command('start', async (ctx) => {
-  await ctx.reply('✅ Bot hidup tod!');
+const bot = new Bot(token);
+
+// 2. Command /start (Ini yang akan direspon)
+bot.command("start", async (ctx) => {
+    await ctx.reply("✅ **Bot Vercel Aktif!** \n\nWebhook bekerja dengan baik.", { parse_mode: "Markdown" });
 });
 
-bot.command('ping', async (ctx) => {
-  await ctx.reply('Pong!');
-});
-
-module.exports = async (req, res) => {
-  if (req.method === 'POST') {
-    await bot.handleUpdate(req.body);
-    res.status(200).json({ ok: true });
-  } else {
-    res.status(200).json({ status: 'running' });
-  }
-};
+// 3. Handler untuk Vercel (Ini yang menangani POST dari Telegram)
+export default webhookCallback(bot, "std/http");
